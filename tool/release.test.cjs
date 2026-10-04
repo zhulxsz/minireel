@@ -33,6 +33,8 @@ test('release assembly rejects missing assets and writes verifiable checksums', 
   assert.throws(() => checksums('1.2.3', release), /exactly/);
   fs.writeFileSync(path.join(release, 'MiniReel-1.2.3-windows-x64-setup.exe'), 'installer');
   assert.throws(() => checksums('1.2.3', release), /exactly/);
+  fs.writeFileSync(path.join(release, 'MiniReel-1.2.3-macos.zip'), 'macos');
+  assert.throws(() => checksums('1.2.3', release), /exactly/);
   collectApks('1.2.3', source, release, 'tv');
   for (const abi of ['arm64-v8a', 'armeabi-v7a', 'x86_64']) {
     assert.equal(fs.readFileSync(path.join(release, `MiniReel-1.2.3-android-${abi}.apk`), 'utf8'), `signed phone ${abi}`);
@@ -40,7 +42,7 @@ test('release assembly rejects missing assets and writes verifiable checksums', 
   }
   checksums('1.2.3', release);
   const entries = fs.readFileSync(path.join(release, 'SHA256SUMS.txt'), 'utf8').trim().split('\n');
-  assert.equal(entries.length, 7);
+  assert.equal(entries.length, 8);
   assert.deepEqual(entries.map(line => line.split('  ')[1]), expectedAssets('1.2.3'));
   for (const line of entries) {
     const [digest, name] = line.split('  ');
