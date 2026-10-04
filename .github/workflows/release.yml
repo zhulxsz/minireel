@@ -80,10 +80,44 @@ jobs:
           compression-level: 0
           retention-days: 7
 
+  macos:
+    needs: metadata
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
+      RELEASE_BUILD_NUMBER: ${{ needs.metadata.outputs.build_number }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+      - run: flutter pub get --enforce-lockfile
+      - name: Build macOS
+        run: |
+          flutter build macos --release --build-name "$RELEASE_VERSION" --build-number "$RELEASE_BUILD_NUMBER"
+          app='build/macos/Build/Products/Release/minireel.app'
+          test -d "$app" || { echo "Missing macOS app bundle"; ls -la build/macos/Build/Products/Release; exit 1; }
+          mkdir -p output/release
+          ditto -c -k --keepParent "$app" "output/release/MiniReel-${RELEASE_VERSION}-macos.zip"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: release-macos
+          path: output/release/*.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
   android:
     needs: metadata
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -102,6 +136,9 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ANDROID_SIGNING_BOOTSTRAP_TAG: signing-bootstrap
         run: node tool/release.cjs restore-keystore "$RUNNER_TEMP/minireel-release.jks"
       - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
         with:
@@ -123,9 +160,6 @@ jobs:
       - name: Build and verify signed APKs
         env:
           ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/minireel-release.jks
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           flutter build apk --release --flavor "$ANDROID_FLAVOR" --split-per-abi --build-name "$RELEASE_VERSION" --build-number "$RELEASE_BUILD_NUMBER"
           keytool -exportcert -keystore "$ANDROID_KEYSTORE_PATH" -alias "$ANDROID_KEY_ALIAS" -storepass:env ANDROID_KEYSTORE_PASSWORD -file "$RUNNER_TEMP/minireel-signing.der"
@@ -149,7 +183,7 @@ jobs:
           retention-days: 7
 
   publish:
-    needs: [metadata, windows, android]
+    needs: [metadata, windows, android, macos]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -180,3 +214,8 @@ jobs:
           fi
           gh release upload "$RELEASE_TAG" release/* --clobber
           gh release edit "$RELEASE_TAG" --draft=false --prerelease="$RELEASE_PRERELEASE"
+      - name: Remove signing bootstrap draft
+        if: success()
+        env:
+          ANDROID_SIGNING_BOOTSTRAP_TAG: signing-bootstrap
+        run: node tool/release.cjs delete-signing-bootstrap
